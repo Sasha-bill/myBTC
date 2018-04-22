@@ -1,10 +1,9 @@
 import time
-import hashlib as hasher
+import hashlib
 import json
 import requests
 import base64
-from flask import Flask
-from flask import request
+from flask import Flask, request
 from multiprocessing import Process, Pipe
 import ecdsa
 
@@ -15,19 +14,19 @@ node = Flask(__name__)
 
 class Block:
     def __init__(self, index, timestamp, data, previous_hash):
-        """Возвращает новый объект Block. Каждый блок «привязан» к предыдущему по
-         уникальному хэшу
-        Аргументы:
-            index (int): Номер блока.
-            timestamp (int): Timestamp создания блока.
-            data (str): Данные для отправки.
-            previous_hash(str): Строка с хэшем предыдущего блока.
-        Атрибуты:
-            index (int): Номер блока.
-            timestamp (int): Timestamp создания блока.
-            data (str): Данные для отправки.
-            previous_hash(str): Строка с хэшем предыдущего блока.
-            hash(str): Хэш текущего блока.
+        """Returns a new Block object. Each block is "chained" to its previous
+        by calling its unique hash.
+        Args:
+            index (int): Block number.
+            timestamp (int): Block creation timestamp.
+            data (str): Data to be sent.
+            previous_hash(str): String representing previous block unique hash.
+        Attrib:
+            index (int): Block number.
+            timestamp (int): Block creation timestamp.
+            data (str): Data to be sent.
+            previous_hash(str): String representing previous block unique hash.
+            hash(str): Current block unique hash.
         """
         self.index = index
         self.timestamp = timestamp
@@ -36,86 +35,84 @@ class Block:
         self.hash = self.hash_block()
 
     def hash_block(self):
-        """Создание уникального хэша для блока при помощи sha256."""
-        sha = hasher.sha256()
-        sha.update((str(self.index) + str(self.timestamp) + str(self.data) + /
-        str(self.previous_hash)).encode('utf-8'))
+        """Creates the unique hash for the block. It uses sha256."""
+        sha = hashlib.sha256()
+        sha.update((str(self.index) + str(self.timestamp) + str(self.data) + str(self.previous_hash)).encode('utf-8'))
         return sha.hexdigest()
 
 
 def create_genesis_block():
-    """Для создания нового блока. ему нужен хэш предыдущего. Первыйблок не знает хэш
-    предыдущего, поэтому его нужно создать руками (нулевой индекс и произвольный хэш)"""
-    return Block(0, time.time(),
-                 {"proof-of-work": 9, "transactions": None},
-                 "0")
+    """To create each block, it needs the hash of the previous one. First
+    block has no previous, so it must be created manually (with index zero
+     and arbitrary previous hash)"""
+    return Block(0, time.time(), {
+        "proof-of-work": 9,
+        "transactions": None},
+        "0")
 
 
-# Копирование блокчейн-ноды
-BLOCKCHAIN = []
-BLOCKCHAIN.append(create_genesis_block())
+# Node's blockchain copy
+BLOCKCHAIN = [create_genesis_block()]
 
-""" Тут хранятся транзакции, которые относятся к текущей ноде. Если нода, которой была 
-отправлена транзакция добавляет новый блок, он успешно принимается, но есть вероятность того,
-что заявка будет отклонена и транзакция вернется """
+""" Stores the transactions that this node has in a list.
+If the node you sent the transaction adds a block
+it will get accepted, but there is a chance it gets
+discarded and your transaction goes back as if it was never
+processed"""
 NODE_PENDING_TRANSACTIONS = []
 
 
 def proof_of_work(last_proof, blockchain):
-    # Создаем переменную, которая будет использоваться для проверки работы
-    incrementor = last_proof + 1
-    # Получаем время начала
+    # Creates a variable that we will use to find our next proof of work
+    incrementer = last_proof + 1
+    # Keep incrementing the incrementer until it's equal to a number divisible by 9
+    # and the proof of work of the previous block in the chain
     start_time = time.time()
-    # Продолжаем увеличивать инкрементатор до тех пор, пока он не будет равен числу, которое
-    # делится на 9, и доказательству работы предыдущего блока
-    while not (incrementor % 7919 == 0 and incrementor % last_proof == 0):
-        incrementor += 1
-        start_time = time.time()
-        # Каждые 60сек проверяем, нашла ли нода подтверждение работы
-        if (int((time.time() - start_time) % 60) == 0):
-            # Если нашла - прекращаем проверку
+    while not (incrementer % 7919 == 0 and incrementer % last_proof == 0):
+        incrementer += 1
+        # Check if any node found the solution every 60 seconds
+        if int((time.time()-start_time) % 60) == 0:
+            # If any other node got the proof, stop searching
             new_blockchain = consensus(blockchain)
-            if new_blockchain != False:
-                # (False:другая нода первая нашла подтверждение работы)
-                return (False, new_blockchain)
-    # Как только число найдено, можно вернуть его как доказательство
-    return (incrementor, blockchain)
+            if new_blockchain:
+                # (False: another node got proof first, new blockchain)
+                return False, new_blockchain
+    # Once that number is found, we can return it as a proof of our work
+    return incrementer, blockchain
 
 
 def mine(a, blockchain, node_pending_transactions):
     BLOCKCHAIN = blockchain
     NODE_PENDING_TRANSACTIONS = node_pending_transactions
     while True:
-        """Майнинг - единственный способ создания новых монет.
-         Чтобы предотвратить создание большого количества монет, процесс
-         замедляется с помощью алгоритма доказательства работы.
+        """Mining is the only way that new coins can be created.
+        In order to prevent too many coins to be created, the process
+        is slowed down by a proof of work algorithm.
         """
-        # Получаем последнее доказательство
+        # Get the last proof of work
         last_block = BLOCKCHAIN[len(BLOCKCHAIN) - 1]
         last_proof = last_block.data['proof-of-work']
-        # Ищем доказательство работы в текущем блоке
-        # Программа будет ждать пока новое подтверждение не будет найдено
+        # Find the proof of work for the current block being mined
+        # Note: The program will hang here until a new proof of work is found
         proof = proof_of_work(last_proof, BLOCKCHAIN)
-        # Если доказательство не нашлось - начинаем майнить опять
-        if proof[0] == False:
-            # Обновляем блокчейн и сохраняемся в файл
+        # If we didn't guess the proof, start mining again
+        if not proof[0]:
+            # Update blockchain and save it to file
             BLOCKCHAIN = proof[1]
             a.send(BLOCKCHAIN)
             continue
         else:
-            # Как только мы найдем действительное доказательство работы, мы можем разбить блок,
-            # и добавить транзакцию
-            # Загружаем все ожидающие транзакции и отправляем их на сервер
-            NODE_PENDING_TRANSACTIONS = requests.get(MINER_NODE_URL + "
-                                                     / txion?update = " + MINER_ADDRESS).content
+            # Once we find a valid proof of work, we know we can mine a block so
+            # ...we reward the miner by adding a transaction
+            # First we load all pending transactions sent to the node server
+            NODE_PENDING_TRANSACTIONS = requests.get(MINER_NODE_URL + "/txion?update=" + MINER_ADDRESS).content
             NODE_PENDING_TRANSACTIONS = json.loads(NODE_PENDING_TRANSACTIONS)
-            # Затем добавляется вознаграждение за майнинг
-            NODE_PENDING_TRANSACTIONS.append(
-                {"from": "network",
-                 "to": MINER_ADDRESS,
-                 "amount": 1}
-            )
-            # Теперь мы можем собрать данные, необходимые для создания нового блока
+            # Then we add the mining reward
+            NODE_PENDING_TRANSACTIONS.append({
+                "from": "network",
+                "to": MINER_ADDRESS,
+                "amount": 1})
+            # Now we can gather the data needed to create the new block
             new_block_data = {
                 "proof-of-work": proof[0],
                 "transactions": list(NODE_PENDING_TRANSACTIONS)
@@ -123,60 +120,59 @@ def mine(a, blockchain, node_pending_transactions):
             new_block_index = last_block.index + 1
             new_block_timestamp = time.time()
             last_block_hash = last_block.hash
-            # Список пустых транзакций
+            # Empty transaction list
             NODE_PENDING_TRANSACTIONS = []
-            # Теперь создаем новый блок
-            mined_block = Block(new_block_index, new_block_timestamp, new_block_data,
-                                last_block_hash)
+            # Now create the new block
+            mined_block = Block(new_block_index, new_block_timestamp, new_block_data, last_block_hash)
             BLOCKCHAIN.append(mined_block)
-            # Сообщаем клиентам, что нода готова майнить
+            # Let the client know this node mined a block
             print(json.dumps({
-                "index": new_block_index,
-                "timestamp": str(new_block_timestamp),
-                "data": new_block_data,
-                "hash": last_block_hash
+              "index": new_block_index,
+              "timestamp": str(new_block_timestamp),
+              "data": new_block_data,
+              "hash": last_block_hash
             }) + "\n")
             a.send(BLOCKCHAIN)
             requests.get(MINER_NODE_URL + "/blocks?update=" + MINER_ADDRESS)
 
 
 def find_new_chains():
-    # Получаем данные о других нодах
+    # Get the blockchains of every other node
     other_chains = []
     for node_url in PEER_NODES:
-        # Получаем их цепочки GET-запросом
+        # Get their chains using a GET request
         block = requests.get(node_url + "/blocks").content
-        # Конвертим объект JSON в словарь Python
+        # Convert the JSON object to a Python dictionary
         block = json.loads(block)
-        # Проверяем, чтобы другая нода была корректной
+        # Verify other node block is correct
         validated = validate_blockchain(block)
-        if validated == True:
-            # Добавляем ее в наш список
+        if validated:
+            # Add it to our list
             other_chains.append(block)
     return other_chains
 
 
 def consensus(blockchain):
-    # Получаем блоки из других нод
+    # Get the blocks from other nodes
     other_chains = find_new_chains()
-    # Если наша цепочка не самая длинная, то мы сохраняем самую длинную цепочку
+    # If our chain isn't longest, then we store the longest chain
     BLOCKCHAIN = blockchain
     longest_chain = BLOCKCHAIN
     for chain in other_chains:
         if len(longest_chain) < len(chain):
             longest_chain = chain
-    # Если самая длинная цепочка не наша, делаем ее самой длинной
+    # If the longest chain wasn't ours, then we set our chain to the longest
     if longest_chain == BLOCKCHAIN:
-        # Продолжаем искать подтверждение
+        # Keep searching for proof
         return False
     else:
-        # Сдаемся, обновляем цепочку и ищем снова
+        # Give up searching proof, update chain and start over again
         BLOCKCHAIN = longest_chain
         return BLOCKCHAIN
 
 
 def validate_blockchain(block):
-    """Проверяем отправленную цепочку. Если хэши неверны, возвращаем false
+    """Validate the submitted chain. If hashes are not correct, return false
     block(str): json
     """
     return True
@@ -184,15 +180,12 @@ def validate_blockchain(block):
 
 @node.route('/blocks', methods=['GET'])
 def get_blocks():
-    # Загружаем текущий блокчейн.
+    # Load current blockchain. Only you should update your blockchain
     if request.args.get("update") == MINER_ADDRESS:
         global BLOCKCHAIN
         BLOCKCHAIN = b.recv()
-        chain_to_send = BLOCKCHAIN
-    else:
-        # Любая нода, которая будет подключаться, будет делать так:
-        chain_to_send = BLOCKCHAIN
-    # Конвертим наши блоки в словари и можем отправить им json объект
+    chain_to_send = BLOCKCHAIN
+    # Converts our blocks into dictionaries so we can send them as json objects later
     chain_to_send_json = []
     for block in chain_to_send:
         block = {
@@ -203,48 +196,52 @@ def get_blocks():
         }
         chain_to_send_json.append(block)
 
-    # Отправляем нашу цепочку тому, кто попросил
+    # Send our chain to whomever requested it
     chain_to_send = json.dumps(chain_to_send_json)
     return chain_to_send
 
 
 @node.route('/txion', methods=['GET', 'POST'])
 def transaction():
-    """Каждая отправленная транзакция в эту ноду проверяется и отправляется.
-    Потом она ждет добавления в блокчейн. Транзакции не создают новые монеты, а только
-    перемещают их.
+    """Each transaction sent to this node gets validated and submitted.
+    Then it waits to be added to the blockchain. Transactions only move
+    coins, they don't create it.
     """
     if request.method == 'POST':
-        # При каждом новом POST-запросе мы извлекаем данные транзакции
+        # On each new POST request, we extract the transaction data
         new_txion = request.get_json()
-        # Добавляем транзакцию в список
+        # Then we add the transaction to our list
         if validate_signature(new_txion['from'], new_txion['signature'], new_txion['message']):
             NODE_PENDING_TRANSACTIONS.append(new_txion)
-            # Транзакция успешно отправлена - сообщаем это в консоль
+            # Because the transaction was successfully
+            # submitted, we log it to our console
             print("New transaction")
             print("FROM: {0}".format(new_txion['from']))
             print("TO: {0}".format(new_txion['to']))
             print("AMOUNT: {0}\n".format(new_txion['amount']))
+            # Then we let the client know it worked out
             return "Transaction submission successful\n"
         else:
             return "Transaction submission failed. Wrong signature\n"
-    # Отправляем ожидающие транзакции майнеру
+    # Send pending transactions to the mining process
     elif request.method == 'GET' and request.args.get("update") == MINER_ADDRESS:
         pending = json.dumps(NODE_PENDING_TRANSACTIONS)
+        # Empty transaction list
         NODE_PENDING_TRANSACTIONS[:] = []
         return pending
 
 
 def validate_signature(public_key, signature, message):
-    """Проверяем правильность подписи. Это используется для доказательства того, что это вы
-    (а не кто-то еще), пытающийся совершить транзакцию за вас. Вызывается, когда пользователь
-    пытается отправить новую транзакцию.
+    """Verifies if the signature is correct. This is used to prove
+    it's you (and not someone else) trying to do a transaction with your
+    address. Called when a user tries to submit a new transaction.
     """
     public_key = (base64.b64decode(public_key)).hex()
     signature = base64.b64decode(signature)
     vk = ecdsa.VerifyingKey.from_string(bytes.fromhex(public_key), curve=ecdsa.SECP256k1)
+    # Try changing into an if/else statement as except is too broad.
     try:
-        return (vk.verify(signature, message.encode()))
+        return vk.verify(signature, message.encode())
     except:
         return False
 
@@ -260,10 +257,10 @@ def welcome_msg():
 
 if __name__ == '__main__':
     welcome_msg()
-    # Запускаем майнинг
+    # Start mining
     a, b = Pipe()
     p1 = Process(target=mine, args=(a, BLOCKCHAIN, NODE_PENDING_TRANSACTIONS))
     p1.start()
-    # Запускаем сервер для приема транзакций
+    # Start server to receive transactions
     p2 = Process(target=node.run(), args=b)
     p2.start()
